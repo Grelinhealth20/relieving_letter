@@ -369,29 +369,29 @@ export default function App() {
     pdf.setTextColor(15, 30, 53);
     pdf.text('For Echo HMS by Grelin Health India LLP', xStart, y);
 
-    y += 9.5; // space before Authorised Signatory label
+    y += 7; // ~6mm gap matching preview marginBottom on company line
     pdf.setFont('times', 'bold');
     pdf.setFontSize(10.5);
     pdf.setTextColor(15, 30, 53);
     pdf.text('Authorised Signatory:', xStart, y);
 
-    y += 3; // space for signature image
+    y += 3; // 3mm gap before signature image (matching preview marginBottom: 3mm)
     pdf.addImage(sigData, 'PNG', xStart, y, 38, 13.3);
 
-    y += 18.5; // 13.3mm image height + vertical space
+    y += 13.3 + 5; // image height + 5mm gap (matching preview marginBottom: 5mm)
     pdf.setFont('times', 'bold');
     pdf.setFontSize(11);
     pdf.setTextColor(17, 17, 17);
     pdf.text('Sofia Balan', xStart, y);
 
-    y += 7;
+    y += 5.5; // ~4mm gap (matching preview marginBottom: 4mm)
     pdf.setFont('times', 'bold');
     pdf.setFontSize(10.5);
     pdf.setTextColor(15, 30, 53);
     pdf.text('Date:', xStart, y);
     pdf.setFont('times', 'normal');
     pdf.setTextColor(17, 17, 17);
-    pdf.text(`  ${fSigDate || '___________'}`, xStart + pdf.getTextWidth('Date:'), y);
+    pdf.text(`  ${fSigDate || ''}`, xStart + pdf.getTextWidth('Date:'), y);
     pdf.setDrawColor(15, 30, 53);
     pdf.setLineWidth(0.35);
     pdf.line(xStart + pdf.getTextWidth('Date:  '), y + 1, xStart + pdf.getTextWidth('Date:  ') + 35, y + 1);
@@ -629,32 +629,32 @@ export default function App() {
     pdf.setTextColor(15, 30, 53);
     pdf.text('For Echo HMS by Grelin Health India LLP', xStart, y);
 
-    y += 9.5; // space before Authorised Signatory label
+    y += 7; // ~6mm gap matching preview marginBottom on company line
     pdf.setFont('times', 'bold');
     pdf.setFontSize(10.5);
     pdf.setTextColor(15, 30, 53);
     pdf.text('Authorised Signatory:', xStart, y);
 
-    y += 3; // space for signature image
+    y += 3; // 3mm gap before signature image (matching preview marginBottom: 3mm)
     pdf.addImage(sigData, 'PNG', xStart, y, 38, 13.3);
 
-    y += 18.5; // 13.3mm image height + vertical space
+    y += 13.3 + 5; // image height + 5mm gap (matching preview marginBottom: 5mm)
     pdf.setFont('times', 'bold');
     pdf.setFontSize(11);
     pdf.setTextColor(17, 17, 17);
     pdf.text('Sofia Balan', xStart, y);
 
-    y += 7;
+    y += 5.5; // ~4mm gap (matching preview marginBottom: 4mm)
     pdf.setFont('times', 'bold');
     pdf.setFontSize(10.5);
     pdf.setTextColor(15, 30, 53);
     pdf.text('Date:', xStart, y);
     pdf.setFont('times', 'normal');
     pdf.setTextColor(17, 17, 17);
-    pdf.text(`  ${fSigDate || '___________'}`, xStart + pdf.getTextWidth('Date:'), y);
+    pdf.text(`  ${fSigDate || ''}`, xStart + pdf.getTextWidth('Date:'), y);
     pdf.setDrawColor(15, 30, 53);
     pdf.setLineWidth(0.35);
-    pdf.line(xStart + pdf.getTextWidth('Date:  '), y + 1, xStart + pdf.getTextWidth('Date:  ') + 38, y + 1);
+    pdf.line(xStart + pdf.getTextWidth('Date:  '), y + 1, xStart + pdf.getTextWidth('Date:  ') + 35, y + 1);
 
     const footerY = 267;
     pdf.setDrawColor(200, 169, 81);
