@@ -150,13 +150,250 @@ export default function App() {
     return true;
   };
 
-  const generateRelievingPDF = (jsPDF, logoData, sigData) => {
-    const pdf = new jsPDF({
-      orientation: 'portrait',
-      unit: 'mm',
-      format: 'a4',
-      compress: true
+  // ── Shared justified-paragraph renderer ─────────────────────────────────
+  // Splits mixed bold/normal segments into tokens, wraps to maxW mm,
+  // and justifies every line except the last (matching CSS text-align:justify).
+  const makeDrawParagraph = (pdf, xStart, maxW) => (segments, yStart) => {
+    const LINE_H = 6.0; // 6mm per line ≈ 1.65 × 13.5px (preview line-height)
+    pdf.setFontSize(10.5);
+    pdf.setFont('times', 'normal');
+    const spaceW = pdf.getTextWidth(' ');
+
+    // Tokenise
+    const tokens = [];
+    segments.forEach(seg => {
+      seg.text.split(' ').forEach((word, idx, arr) => {
+        if (word === '' && idx > 0 && idx < arr.length - 1) return;
+        tokens.push({ text: word, bold: !!seg.bold });
+      });
     });
+
+    // Word-wrap
+    const lines = [];
+    let curLine = [], curW = 0;
+    tokens.forEach(tok => {
+      pdf.setFont('times', tok.bold ? 'bold' : 'normal');
+      const tw = pdf.getTextWidth(tok.text);
+      const gap = curLine.length > 0 ? spaceW : 0;
+      if (curW + gap + tw > maxW && curLine.length > 0) {
+        lines.push(curLine);
+        curLine = [tok]; curW = tw;
+      } else {
+        curLine.push(tok); curW += gap + tw;
+      }
+    });
+    if (curLine.length > 0) lines.push(curLine);
+
+    // Render with justification
+    let cy = yStart;
+    lines.forEach((line, li) => {
+      const isLast = li === lines.length - 1;
+      let sw = spaceW;
+      if (!isLast && line.length > 1) {
+        let tw = 0;
+        line.forEach(t => { pdf.setFont('times', t.bold ? 'bold' : 'normal'); tw += pdf.getTextWidth(t.text); });
+        const candidate = (maxW - tw) / (line.length - 1);
+        if (candidate >= spaceW * 0.5 && candidate <= spaceW * 3) sw = candidate;
+      }
+      let cx = xStart;
+      line.forEach((tok, ti) => {
+        pdf.setFont('times', tok.bold ? 'bold' : 'normal');
+        pdf.setTextColor(26, 26, 26);
+        pdf.text(tok.text, cx, cy);
+        cx += pdf.getTextWidth(tok.text) + (ti < line.length - 1 ? sw : 0);
+      });
+      cy += LINE_H;
+    });
+    return cy;
+  };
+
+  // ── Shared page chrome (border, logo, gold line, footer) ────────────────
+  const drawPageChrome = (pdf, logoData) => {
+    // Outer thick border — #0f1e35
+    pdf.setDrawColor(15, 30, 53);
+    pdf.setLineWidth(0.8);
+    pdf.rect(10, 10, 190, 277);
+    // Inner thin border
+    pdf.setDrawColor(15, 30, 53);
+    pdf.setLineWidth(0.25);
+    pdf.rect(13, 13, 184, 271);
+
+    // Logo — centred, height ≈ 8.3 mm (52 / 6.282), top y=17 matching
+    // preview header padding-top 24px ≈ 9mm but logo baseline is at ~25mm
+    const logoW = 52;
+    const logoH = logoW / 6.282; // ~8.28 mm
+    pdf.addImage(logoData, 'PNG', (210 - logoW) / 2, 17, logoW, logoH);
+
+    // Gold accent line below header (preview: height 0.4mm solid #c8a951)
+    pdf.setDrawColor(200, 169, 81);
+    pdf.setLineWidth(0.4);
+    pdf.line(25, 29.5, 185, 29.5);
+
+    // Footer gold line (preview: borderTop 0.5mm #c8a951 at letter-footer top)
+    const footerLineY = 264;
+    pdf.setDrawColor(200, 169, 81);
+    pdf.setLineWidth(0.5);
+    pdf.line(25, footerLineY, 185, footerLineY);
+
+    // Footer company name — bold, #0f1e35, fontSize 10 (≈ 13.3px ≈ preview 11px)
+    const footerTextY = footerLineY + 4.5;
+    pdf.setFont('times', 'bold');
+    pdf.setFontSize(10);
+    pdf.setTextColor(15, 30, 53);
+    const footerCompany = 'Echo HMS by Grelin Health India LLP';
+    pdf.text(footerCompany, (210 - pdf.getTextWidth(footerCompany)) / 2, footerTextY);
+
+    // Footer address — normal, #64646e, fontSize 8.5
+    pdf.setFont('times', 'normal');
+    pdf.setFontSize(8.5);
+    pdf.setTextColor(100, 100, 110);
+    const footerAddr = 'No. 44/80, Thanthai Periyar Nagar, Kundrathur Main Road, Kummananchavadi, Ponammalle, Chennai - 600 056';
+    pdf.text(footerAddr, (210 - pdf.getTextWidth(footerAddr)) / 2, footerTextY + 4.5);
+  };
+
+  // ── Shared header block (Date / To / Subject / Salutation) ──────────────
+  // Returns y position after the salutation line so body paragraphs start there.
+  const drawLetterHeader = (pdf, subjectText, fLetterDate, empName, empId) => {
+    const xStart = 25;
+    // ── Date of Letter ──
+    // Preview: font 13.5px bold (#1a1a1a), marginBottom 8mm
+    // Body padding-top is 20mm; gold line at y=29.5; so body top = 29.5+20=49.5 but
+    // we keep y=33 for "Date:" baseline consistent with preview letter-date position.
+    const dateY = 38;
+    pdf.setFont('times', 'bold');
+    pdf.setFontSize(12.5);
+    pdf.setTextColor(17, 17, 17);
+    pdf.text('Date:', xStart, dateY);
+
+    pdf.setFont('times', 'normal');
+    pdf.setFontSize(12.5);
+    pdf.setTextColor(26, 26, 26);
+    // Value sits immediately after "Date: " label (use getTextWidth for exact gap)
+    pdf.text(fLetterDate || '', xStart + pdf.getTextWidth('Date: '), dateY);
+
+    // ── To block ── (preview: marginBottom 8mm, font 13.5px)
+    // "To," label
+    let y = dateY + 8; // 8mm gap = preview marginBottom of letter-date
+    pdf.setFont('times', 'normal');
+    pdf.setFontSize(12.5);
+    pdf.setTextColor(17, 17, 17);
+    pdf.text('To,', xStart, y);
+
+    // Employee name — bold 13px #0f1e35 (preview .to-name: 14.5px bold #0f1e35)
+    y += 5.5;
+    pdf.setFont('times', 'bold');
+    pdf.setFontSize(13);
+    pdf.setTextColor(15, 30, 53);
+    pdf.text(empName || '', xStart, y);
+
+    // Employee ID — normal 12.5px #111 (preview: 13.5px #111)
+    y += 5.5;
+    pdf.setFont('times', 'normal');
+    pdf.setFontSize(12.5);
+    pdf.setTextColor(17, 17, 17);
+    pdf.text(`Employee ID: ${empId || ''}`, xStart, y);
+
+    // ── Subject block ── (preview: bg #f4f6f9, borderLeft 4px #0f1e35, padding 3mm 4mm, marginBottom 10mm)
+    y += 8; // 8mm gap = preview marginBottom of letter-to-block
+    const subjH = 9.5; // height of subject box in mm ≈ preview padding 3+3mm + text
+    pdf.setFillColor(244, 246, 249);
+    pdf.rect(xStart, y, 160, subjH, 'F');
+    // Left accent bar (4px ≈ 1.5mm → use lineWidth 1.5, draw at xStart)
+    pdf.setDrawColor(15, 30, 53);
+    pdf.setLineWidth(1.5);
+    pdf.line(xStart, y, xStart, y + subjH);
+    // Reset lineWidth
+    pdf.setLineWidth(0.4);
+
+    // "Subject: " label
+    pdf.setFont('times', 'bold');
+    pdf.setFontSize(12.5);
+    pdf.setTextColor(15, 30, 53);
+    const subjLabelText = 'Subject: ';
+    pdf.text(subjLabelText, xStart + 4, y + 6.2);
+
+    // Subject value — bold underlined
+    const subjLabelW = pdf.getTextWidth(subjLabelText);
+    pdf.text(subjectText, xStart + 4 + subjLabelW, y + 6.2);
+    const subjTextW = pdf.getTextWidth(subjectText);
+    pdf.setLineWidth(0.3);
+    pdf.line(xStart + 4 + subjLabelW, y + 7.3, xStart + 4 + subjLabelW + subjTextW, y + 7.3);
+
+    // ── Salutation ── (preview: font 14px bold #0d0d0d, marginBottom 6mm)
+    y += subjH + 10; // 10mm gap = preview marginBottom of letter-subject
+    pdf.setFont('times', 'bold');
+    pdf.setFontSize(13);
+    pdf.setTextColor(13, 13, 13);
+    pdf.text(`Dear ${empName || ''},`, xStart, y);
+
+    // Return y after salutation (paragraphs start 6mm below)
+    return y + 6;
+  };
+
+  // ── Shared signoff block ──────────────────────────────────────────────────
+  // Renders signoff starting at yStart, returns final y position.
+  const drawSignoff = (pdf, sigData, fSigDate, yStart) => {
+    const xStart = 25;
+    let y = yStart + 10; // preview: marginTop 10mm on letter-signoff
+
+    // "Yours sincerely," — normal 10.5pt #1a1a1a
+    pdf.setFont('times', 'normal');
+    pdf.setFontSize(10.5);
+    pdf.setTextColor(26, 26, 26);
+    pdf.text('Yours sincerely,', xStart, y);
+
+    // "For Echo HMS..." — bold 11pt #0f1e35, marginTop 1.5mm, marginBottom 6mm
+    y += 5.5; // 1.5mm marginTop + ~4mm line-height gap
+    pdf.setFont('times', 'bold');
+    pdf.setFontSize(11);
+    pdf.setTextColor(15, 30, 53);
+    pdf.text('For Echo HMS by Grelin Health India LLP', xStart, y);
+
+    // "Authorised Signatory:" — bold 10.5pt #0f1e35, marginBottom 3mm
+    y += 7; // 6mm marginBottom preview → 7mm in PDF to account for baseline
+    pdf.setFont('times', 'bold');
+    pdf.setFontSize(10.5);
+    pdf.setTextColor(15, 30, 53);
+    pdf.text('Authorised Signatory:', xStart, y);
+
+    // Signature image — 38mm × 13.3mm, marginBottom 5mm (3mm gap below label)
+    y += 3;
+    pdf.addImage(sigData, 'PNG', xStart, y, 38, 13.3);
+
+    // "Sofia Balan" — bold 11pt, marginBottom 4mm
+    y += 13.3 + 5; // image height + 5mm marginBottom
+    pdf.setFont('times', 'bold');
+    pdf.setFontSize(11);
+    pdf.setTextColor(17, 17, 17);
+    pdf.text('Sofia Balan', xStart, y);
+
+    // "Date:" label + value + underline — bold label, normal value, 35mm underline
+    y += 5.5; // 4mm marginBottom + baseline offset
+    pdf.setFont('times', 'bold');
+    pdf.setFontSize(10.5);
+    pdf.setTextColor(15, 30, 53);
+    pdf.text('Date:', xStart, y);
+
+    // Value immediately after label with a small gap (preview: paddingLeft 8px ≈ 3mm)
+    const dateLabelW = pdf.getTextWidth('Date:');
+    const dateGap = 3; // 3mm ≈ 8px paddingLeft
+    pdf.setFont('times', 'normal');
+    pdf.setFontSize(10.5);
+    pdf.setTextColor(26, 26, 26);
+    pdf.text(fSigDate || '', xStart + dateLabelW + dateGap, y);
+
+    // Underline starting at value position, 35mm wide (preview: minWidth 35mm)
+    const underlineX = xStart + dateLabelW + dateGap;
+    pdf.setDrawColor(15, 30, 53);
+    pdf.setLineWidth(0.35);
+    pdf.line(underlineX, y + 1, underlineX + 35, y + 1);
+
+    return y;
+  };
+
+  // ── Relieving Letter PDF ─────────────────────────────────────────────────
+  const generateRelievingPDF = (jsPDF, logoData, sigData) => {
+    const pdf = new jsPDF({ orientation: 'portrait', unit: 'mm', format: 'a4', compress: true });
 
     pdf.setProperties({
       title: `Relieving Letter - ${form.empName}`,
@@ -166,265 +403,62 @@ export default function App() {
       creator: 'Echo HMS Enterprise Portal'
     });
 
-    const {
-      letterDate, empName, empId, designation,
-      dateOfJoining, lastWorkingDate, sigDate
-    } = form;
-
+    const { empName, empId, designation, letterDate, dateOfJoining, lastWorkingDate, sigDate } = form;
     const fLetterDate = formatDate(letterDate);
     const fDOJ        = formatDate(dateOfJoining);
     const fLWD        = formatDate(lastWorkingDate);
     const fSigDate    = formatDate(sigDate);
 
-    // --- Draw double border ---
-    pdf.setDrawColor(15, 30, 53); // #0f1e35
-    pdf.setLineWidth(0.8);
-    pdf.rect(10, 10, 190, 277);
-
-    pdf.setDrawColor(15, 30, 53);
-    pdf.setLineWidth(0.25);
-    pdf.rect(13, 13, 184, 271);
-
-    // --- Draw Logo ---
-    const logoW = 52;
-    const logoH = logoW / 6.282;
-    const logoX = (210 - logoW) / 2;
-    pdf.addImage(logoData, 'PNG', logoX, 17, logoW, logoH);
-
-    pdf.setDrawColor(200, 169, 81); // #c8a951
-    pdf.setLineWidth(0.4);
-    pdf.line(25, 29.5, 185, 29.5);
+    drawPageChrome(pdf, logoData);
 
     const xStart = 25;
-    const maxW = 160;
+    const maxW   = 160;
+    const drawParagraph = makeDrawParagraph(pdf, xStart, maxW);
 
-    // Date of Letter
-    pdf.setFont('times', 'bold');
-    pdf.setFontSize(12);
-    pdf.setTextColor(17, 17, 17);
-    pdf.text('Date:', xStart, 39);
-    pdf.setFont('times', 'normal');
-    pdf.text(fLetterDate || '', xStart + 11, 39);
+    let y = drawLetterHeader(pdf, 'Relieving Letter', fLetterDate, empName, empId);
 
-    // Recipient Block
-    let y = 47.5;
-    pdf.setFont('times', 'normal');
-    pdf.setFontSize(12);
-    pdf.text('To,', xStart, y);
-    
-    y += 5.5;
-    pdf.setFont('times', 'bold');
-    pdf.setFontSize(13);
-    pdf.setTextColor(15, 30, 53);
-    pdf.text(empName || '', xStart, y);
-
-    y += 5.5;
-    pdf.setFont('times', 'normal');
-    pdf.setFontSize(12);
-    pdf.setTextColor(17, 17, 17);
-    pdf.text(`Employee ID: ${empId || ''}`, xStart, y);
-
-    // Subject Block
-    y += 8;
-    pdf.setFillColor(244, 246, 249);
-    pdf.rect(xStart, y, maxW, 9.5, 'F');
-    pdf.setDrawColor(15, 30, 53);
-    pdf.setLineWidth(0.8);
-    pdf.line(xStart, y, xStart, y + 9.5);
-
-    pdf.setFontSize(12);
-    pdf.setFont('times', 'bold');
-    pdf.setTextColor(15, 30, 53);
-    pdf.text('Subject:', xStart + 4, y + 6.2);
-    
-    pdf.setFont('times', 'bold');
-    const subjLabelW = pdf.getTextWidth('Subject: ');
-    pdf.text('Relieving Letter', xStart + 4 + subjLabelW, y + 6.2);
-    const subjTextW = pdf.getTextWidth('Relieving Letter');
-    pdf.setLineWidth(0.25);
-    pdf.line(xStart + 4 + subjLabelW, y + 7.2, xStart + 4 + subjLabelW + subjTextW, y + 7.2);
-
-    // Salutation
-    y += 18;
-    pdf.setFont('times', 'bold');
-    pdf.setFontSize(12.5);
-    pdf.setTextColor(13, 13, 13);
-    pdf.text(`Dear ${empName || ''},`, xStart, y);
-
-    const drawParagraph = (segments, yStart) => {
-      const tokens = [];
-      segments.forEach(seg => {
-        const words = seg.text.split(' ');
-        words.forEach((word, idx) => {
-          if (word === '' && idx > 0 && idx < words.length - 1) return;
-          tokens.push({
-            text: word,
-            bold: !!seg.bold,
-            spaceAfter: idx < words.length - 1
-          });
-        });
-      });
-
-      const lines = [];
-      let currentLine = [];
-      let currentWidth = 0;
-      
-      pdf.setFont('times', 'normal');
-      pdf.setFontSize(10.5);
-      const spaceWidth = pdf.getTextWidth(' ');
-
-      for (let i = 0; i < tokens.length; i++) {
-        const token = tokens[i];
-        pdf.setFont('times', token.bold ? 'bold' : 'normal');
-        const tokenWidth = pdf.getTextWidth(token.text);
-        const extra = currentLine.length > 0 ? spaceWidth : 0;
-
-        if (currentWidth + extra + tokenWidth > maxW && currentLine.length > 0) {
-          lines.push(currentLine);
-          currentLine = [token];
-          currentWidth = tokenWidth;
-        } else {
-          currentLine.push(token);
-          currentWidth += extra + tokenWidth;
-        }
-      }
-      if (currentLine.length > 0) {
-        lines.push(currentLine);
-      }
-
-      let currentY = yStart;
-      lines.forEach((line, lineIdx) => {
-        const isLastLine = lineIdx === lines.length - 1;
-        let customSpaceWidth = spaceWidth;
-
-        if (!isLastLine && line.length > 1) {
-          let totalWordWidth = 0;
-          line.forEach(token => {
-            pdf.setFont('times', token.bold ? 'bold' : 'normal');
-            totalWordWidth += pdf.getTextWidth(token.text);
-          });
-          customSpaceWidth = (maxW - totalWordWidth) / (line.length - 1);
-          if (customSpaceWidth < spaceWidth * 0.5 || customSpaceWidth > spaceWidth * 3) {
-            customSpaceWidth = spaceWidth;
-          }
-        }
-
-        let currentX = xStart;
-        line.forEach((token, tokenIdx) => {
-          pdf.setFont('times', token.bold ? 'bold' : 'normal');
-          pdf.setTextColor(26, 26, 26);
-          pdf.text(token.text, currentX, currentY);
-          currentX += pdf.getTextWidth(token.text) + (tokenIdx < line.length - 1 ? customSpaceWidth : 0);
-        });
-
-        currentY += 6.0;
-      });
-
-      return currentY;
-    };
-
-    y += 7;
+    // ── Body paragraphs ── (preview: font 13.5px, line-height 1.65, marginBottom 12px ≈ 4.5mm)
     const p1 = [
-      { text: "This is to formally acknowledge that you have been relieved from your duties at " },
-      { text: "Echo HMS by Grelin Health India LLP", bold: true },
-      { text: " with effect from " },
+      { text: 'This is to formally acknowledge that you have been relieved from your duties at ' },
+      { text: 'Echo HMS by Grelin Health India LLP', bold: true },
+      { text: ' with effect from ' },
       { text: fLWD || '', bold: true },
-      { text: "." }
+      { text: '.' }
     ];
     y = drawParagraph(p1, y);
 
     y += 4.5;
     const p2 = [
-      { text: "You were employed with us as " },
+      { text: 'You were employed with us as ' },
       { text: designation || '', bold: true },
-      { text: " from " },
+      { text: ' from ' },
       { text: fDOJ || '', bold: true },
-      { text: " to " },
+      { text: ' to ' },
       { text: fLWD || '', bold: true },
-      { text: ". During your tenure, you fulfilled your assigned responsibilities diligently and have completed the required handover of your duties, documents, and company assets in accordance with the organization's policies and procedures." }
+      { text: '. During your tenure, you fulfilled your assigned responsibilities diligently and have completed the required handover of your duties, documents, and company assets in accordance with the organization\u2019s policies and procedures.' }
     ];
     y = drawParagraph(p2, y);
 
     y += 4.5;
     const p3 = [
-      { text: "We hereby confirm that there are no outstanding dues, liabilities, or obligations pending from your end as of your relieving date." }
+      { text: 'We hereby confirm that there are no outstanding dues, liabilities, or obligations pending from your end as of your relieving date.' }
     ];
     y = drawParagraph(p3, y);
 
     y += 4.5;
     const p4 = [
-      { text: "We sincerely appreciate your contributions to the organization and thank you for your services. We wish you continued success and all the very best in your future endeavors." }
+      { text: 'We sincerely appreciate your contributions to the organization and thank you for your services. We wish you continued success and all the very best in your future endeavors.' }
     ];
     y = drawParagraph(p4, y);
 
-    y += 8;
-    pdf.setFont('times', 'normal');
-    pdf.setFontSize(10.5);
-    pdf.setTextColor(17, 17, 17);
-    pdf.text('Yours sincerely,', xStart, y);
-
-    y += 5.5;
-    pdf.setFont('times', 'bold');
-    pdf.setFontSize(11);
-    pdf.setTextColor(15, 30, 53);
-    pdf.text('For Echo HMS by Grelin Health India LLP', xStart, y);
-
-    y += 7; // ~6mm gap matching preview marginBottom on company line
-    pdf.setFont('times', 'bold');
-    pdf.setFontSize(10.5);
-    pdf.setTextColor(15, 30, 53);
-    pdf.text('Authorised Signatory:', xStart, y);
-
-    y += 3; // 3mm gap before signature image (matching preview marginBottom: 3mm)
-    pdf.addImage(sigData, 'PNG', xStart, y, 38, 13.3);
-
-    y += 13.3 + 5; // image height + 5mm gap (matching preview marginBottom: 5mm)
-    pdf.setFont('times', 'bold');
-    pdf.setFontSize(11);
-    pdf.setTextColor(17, 17, 17);
-    pdf.text('Sofia Balan', xStart, y);
-
-    y += 5.5; // ~4mm gap (matching preview marginBottom: 4mm)
-    pdf.setFont('times', 'bold');
-    pdf.setFontSize(10.5);
-    pdf.setTextColor(15, 30, 53);
-    pdf.text('Date:', xStart, y);
-    pdf.setFont('times', 'normal');
-    pdf.setTextColor(17, 17, 17);
-    pdf.text(`  ${fSigDate || ''}`, xStart + pdf.getTextWidth('Date:'), y);
-    pdf.setDrawColor(15, 30, 53);
-    pdf.setLineWidth(0.35);
-    pdf.line(xStart + pdf.getTextWidth('Date:  '), y + 1, xStart + pdf.getTextWidth('Date:  ') + 35, y + 1);
-
-    const footerY = 267;
-    pdf.setDrawColor(200, 169, 81);
-    pdf.setLineWidth(0.5);
-    pdf.line(25, footerY - 4, 185, footerY - 4);
-
-    pdf.setFont('times', 'bold');
-    pdf.setFontSize(10);
-    pdf.setTextColor(15, 30, 53);
-    const footerCompany = 'Echo HMS by Grelin Health India LLP';
-    const footerCompanyW = pdf.getTextWidth(footerCompany);
-    pdf.text(footerCompany, (210 - footerCompanyW) / 2, footerY);
-
-    pdf.setFont('times', 'normal');
-    pdf.setFontSize(8.5);
-    pdf.setTextColor(100, 100, 110);
-    const footerAddr = 'No. 44/80, Thanthai Periyar Nagar, Kundrathur Main Road, Kummananchavadi, Ponammalle, Chennai - 600 056';
-    const footerAddrW = pdf.getTextWidth(footerAddr);
-    pdf.text(footerAddr, (210 - footerAddrW) / 2, footerY + 4.5);
+    drawSignoff(pdf, sigData, fSigDate, y);
 
     return pdf;
   };
 
+  // ── Experience Certificate PDF ───────────────────────────────────────────
   const generateExperiencePDF = (jsPDF, logoData, sigData) => {
-    const pdf = new jsPDF({
-      orientation: 'portrait',
-      unit: 'mm',
-      format: 'a4',
-      compress: true
-    });
+    const pdf = new jsPDF({ orientation: 'portrait', unit: 'mm', format: 'a4', compress: true });
 
     pdf.setProperties({
       title: `Experience Certificate - ${form.empName}`,
@@ -434,246 +468,47 @@ export default function App() {
       creator: 'Echo HMS Enterprise Portal'
     });
 
-    const {
-      letterDate, empName, empId, designation,
-      dateOfJoining, lastWorkingDate, sigDate
-    } = form;
-
+    const { empName, empId, designation, letterDate, dateOfJoining, lastWorkingDate, sigDate } = form;
     const fLetterDate = formatDate(letterDate);
     const fDOJ        = formatDate(dateOfJoining);
     const fLWD        = formatDate(lastWorkingDate);
     const fSigDate    = formatDate(sigDate);
 
-    // --- Draw double border ---
-    pdf.setDrawColor(15, 30, 53); // #0f1e35
-    pdf.setLineWidth(0.8);
-    pdf.rect(10, 10, 190, 277);
-
-    pdf.setDrawColor(15, 30, 53);
-    pdf.setLineWidth(0.25);
-    pdf.rect(13, 13, 184, 271);
-
-    // --- Draw Logo ---
-    const logoW = 52;
-    const logoH = logoW / 6.282;
-    const logoX = (210 - logoW) / 2;
-    pdf.addImage(logoData, 'PNG', logoX, 17, logoW, logoH);
-
-    pdf.setDrawColor(200, 169, 81); // #c8a951
-    pdf.setLineWidth(0.4);
-    pdf.line(25, 29.5, 185, 29.5);
+    drawPageChrome(pdf, logoData);
 
     const xStart = 25;
-    const maxW = 160;
+    const maxW   = 160;
+    const drawParagraph = makeDrawParagraph(pdf, xStart, maxW);
 
-    // Date of Letter
-    pdf.setFont('times', 'bold');
-    pdf.setFontSize(12);
-    pdf.setTextColor(17, 17, 17);
-    pdf.text('Date:', xStart, 39);
-    pdf.setFont('times', 'normal');
-    pdf.text(fLetterDate || '', xStart + 11, 39);
+    let y = drawLetterHeader(pdf, 'Experience Certificate', fLetterDate, empName, empId);
 
-    // Recipient Block
-    let y = 47.5;
-    pdf.setFont('times', 'normal');
-    pdf.setFontSize(12);
-    pdf.text('To,', xStart, y);
-    
-    y += 5.5;
-    pdf.setFont('times', 'bold');
-    pdf.setFontSize(13);
-    pdf.setTextColor(15, 30, 53);
-    pdf.text(empName || '', xStart, y);
-
-    y += 5.5;
-    pdf.setFont('times', 'normal');
-    pdf.setFontSize(12);
-    pdf.setTextColor(17, 17, 17);
-    pdf.text(`Employee ID: ${empId || ''}`, xStart, y);
-
-    // Subject Block
-    y += 8;
-    pdf.setFillColor(244, 246, 249);
-    pdf.rect(xStart, y, maxW, 9.5, 'F');
-    pdf.setDrawColor(15, 30, 53);
-    pdf.setLineWidth(0.8);
-    pdf.line(xStart, y, xStart, y + 9.5);
-
-    pdf.setFontSize(12);
-    pdf.setFont('times', 'bold');
-    pdf.setTextColor(15, 30, 53);
-    pdf.text('Subject:', xStart + 4, y + 6.2);
-    
-    pdf.setFont('times', 'bold');
-    const subjLabelW = pdf.getTextWidth('Subject: ');
-    pdf.text('Experience Certificate', xStart + 4 + subjLabelW, y + 6.2);
-    const subjTextW = pdf.getTextWidth('Experience Certificate');
-    pdf.setLineWidth(0.25);
-    pdf.line(xStart + 4 + subjLabelW, y + 7.2, xStart + 4 + subjLabelW + subjTextW, y + 7.2);
-
-    // Salutation
-    y += 18;
-    pdf.setFont('times', 'bold');
-    pdf.setFontSize(12.5);
-    pdf.setTextColor(13, 13, 13);
-    pdf.text(`Dear ${empName || ''},`, xStart, y);
-
-    const drawParagraph = (segments, yStart) => {
-      const tokens = [];
-      segments.forEach(seg => {
-        const words = seg.text.split(' ');
-        words.forEach((word, idx) => {
-          if (word === '' && idx > 0 && idx < words.length - 1) return;
-          tokens.push({
-            text: word,
-            bold: !!seg.bold,
-            spaceAfter: idx < words.length - 1
-          });
-        });
-      });
-
-      const lines = [];
-      let currentLine = [];
-      let currentWidth = 0;
-      
-      pdf.setFont('times', 'normal');
-      pdf.setFontSize(10.5);
-      const spaceWidth = pdf.getTextWidth(' ');
-
-      for (let i = 0; i < tokens.length; i++) {
-        const token = tokens[i];
-        pdf.setFont('times', token.bold ? 'bold' : 'normal');
-        const tokenWidth = pdf.getTextWidth(token.text);
-        const extra = currentLine.length > 0 ? spaceWidth : 0;
-
-        if (currentWidth + extra + tokenWidth > maxW && currentLine.length > 0) {
-          lines.push(currentLine);
-          currentLine = [token];
-          currentWidth = tokenWidth;
-        } else {
-          currentLine.push(token);
-          currentWidth += extra + tokenWidth;
-        }
-      }
-      if (currentLine.length > 0) {
-        lines.push(currentLine);
-      }
-
-      let currentY = yStart;
-      lines.forEach((line, lineIdx) => {
-        const isLastLine = lineIdx === lines.length - 1;
-        let customSpaceWidth = spaceWidth;
-
-        if (!isLastLine && line.length > 1) {
-          let totalWordWidth = 0;
-          line.forEach(token => {
-            pdf.setFont('times', token.bold ? 'bold' : 'normal');
-            totalWordWidth += pdf.getTextWidth(token.text);
-          });
-          customSpaceWidth = (maxW - totalWordWidth) / (line.length - 1);
-          if (customSpaceWidth < spaceWidth * 0.5 || customSpaceWidth > spaceWidth * 3) {
-            customSpaceWidth = spaceWidth;
-          }
-        }
-
-        let currentX = xStart;
-        line.forEach((token, tokenIdx) => {
-          pdf.setFont('times', token.bold ? 'bold' : 'normal');
-          pdf.setTextColor(26, 26, 26);
-          pdf.text(token.text, currentX, currentY);
-          currentX += pdf.getTextWidth(token.text) + (tokenIdx < line.length - 1 ? customSpaceWidth : 0);
-        });
-
-        currentY += 6.0;
-      });
-
-      return currentY;
-    };
-
-    y += 7;
+    // ── Body paragraphs ──
     const p1 = [
-      { text: "This is to certify that you were employed with " },
-      { text: "Echo HMS by Grelin Health India LLP", bold: true },
-      { text: " as " },
+      { text: 'This is to certify that you were employed with ' },
+      { text: 'Echo HMS by Grelin Health India LLP', bold: true },
+      { text: ' as ' },
       { text: designation || '', bold: true },
-      { text: " from " },
+      { text: ' from ' },
       { text: fDOJ || '', bold: true },
-      { text: " to " },
+      { text: ' to ' },
       { text: fLWD || '', bold: true },
-      { text: "." }
+      { text: '.' }
     ];
     y = drawParagraph(p1, y);
 
     y += 4.5;
     const p2 = [
-      { text: "During your tenure with the organization, you were entrusted with responsibilities relevant to your role and demonstrated dedication, professionalism, and commitment in carrying out your duties. You consistently contributed to the organization's objectives and maintained a professional approach towards colleagues, clients, and assigned tasks." }
+      { text: 'During your tenure with the organization, you were entrusted with responsibilities relevant to your role and demonstrated dedication, professionalism, and commitment in carrying out your duties. You consistently contributed to the organization\u2019s objectives and maintained a professional approach towards colleagues, clients, and assigned tasks.' }
     ];
     y = drawParagraph(p2, y);
 
     y += 4.5;
     const p3 = [
-      { text: "We appreciate your contributions during your association with us and thank you for your services. We wish you every success and prosperity in your future professional endeavors." }
+      { text: 'We appreciate your contributions during your association with us and thank you for your services. We wish you every success and prosperity in your future professional endeavors.' }
     ];
     y = drawParagraph(p3, y);
 
-    y += 8;
-    pdf.setFont('times', 'normal');
-    pdf.setFontSize(10.5);
-    pdf.setTextColor(17, 17, 17);
-    pdf.text('Yours sincerely,', xStart, y);
-
-    y += 5.5;
-    pdf.setFont('times', 'bold');
-    pdf.setFontSize(11);
-    pdf.setTextColor(15, 30, 53);
-    pdf.text('For Echo HMS by Grelin Health India LLP', xStart, y);
-
-    y += 7; // ~6mm gap matching preview marginBottom on company line
-    pdf.setFont('times', 'bold');
-    pdf.setFontSize(10.5);
-    pdf.setTextColor(15, 30, 53);
-    pdf.text('Authorised Signatory:', xStart, y);
-
-    y += 3; // 3mm gap before signature image (matching preview marginBottom: 3mm)
-    pdf.addImage(sigData, 'PNG', xStart, y, 38, 13.3);
-
-    y += 13.3 + 5; // image height + 5mm gap (matching preview marginBottom: 5mm)
-    pdf.setFont('times', 'bold');
-    pdf.setFontSize(11);
-    pdf.setTextColor(17, 17, 17);
-    pdf.text('Sofia Balan', xStart, y);
-
-    y += 5.5; // ~4mm gap (matching preview marginBottom: 4mm)
-    pdf.setFont('times', 'bold');
-    pdf.setFontSize(10.5);
-    pdf.setTextColor(15, 30, 53);
-    pdf.text('Date:', xStart, y);
-    pdf.setFont('times', 'normal');
-    pdf.setTextColor(17, 17, 17);
-    pdf.text(`  ${fSigDate || ''}`, xStart + pdf.getTextWidth('Date:'), y);
-    pdf.setDrawColor(15, 30, 53);
-    pdf.setLineWidth(0.35);
-    pdf.line(xStart + pdf.getTextWidth('Date:  '), y + 1, xStart + pdf.getTextWidth('Date:  ') + 35, y + 1);
-
-    const footerY = 267;
-    pdf.setDrawColor(200, 169, 81);
-    pdf.setLineWidth(0.5);
-    pdf.line(25, footerY - 4, 185, footerY - 4);
-
-    pdf.setFont('times', 'bold');
-    pdf.setFontSize(10);
-    pdf.setTextColor(15, 30, 53);
-    const footerCompany = 'Echo HMS by Grelin Health India LLP';
-    const footerCompanyW = pdf.getTextWidth(footerCompany);
-    pdf.text(footerCompany, (210 - footerCompanyW) / 2, footerY);
-
-    pdf.setFont('times', 'normal');
-    pdf.setFontSize(8.5);
-    pdf.setTextColor(100, 100, 110);
-    const footerAddr = 'No. 44/80, Thanthai Periyar Nagar, Kundrathur Main Road, Kummananchavadi, Ponammalle, Chennai - 600 056';
-    const footerAddrW = pdf.getTextWidth(footerAddr);
-    pdf.text(footerAddr, (210 - footerAddrW) / 2, footerY + 4.5);
+    drawSignoff(pdf, sigData, fSigDate, y);
 
     return pdf;
   };
