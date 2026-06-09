@@ -389,12 +389,16 @@ export default function App() {
     pdf.setFontSize(10.5);
     pdf.setTextColor(15, 30, 53);
     pdf.text('Date:', xStart, y);
+    const dateLabelW = pdf.getTextWidth('Date:');
+    const dateValueX = xStart + dateLabelW + 2;
     pdf.setFont('times', 'normal');
     pdf.setTextColor(17, 17, 17);
-    pdf.text(`  ${fSigDate || '___________'}`, xStart + pdf.getTextWidth('Date:'), y);
+    if (fSigDate) {
+      pdf.text(fSigDate, dateValueX, y);
+    }
     pdf.setDrawColor(15, 30, 53);
     pdf.setLineWidth(0.35);
-    pdf.line(xStart + pdf.getTextWidth('Date:  '), y + 1, xStart + pdf.getTextWidth('Date:  ') + 35, y + 1);
+    pdf.line(dateValueX, y + 1, dateValueX + 35, y + 1);
 
     const footerY = 267;
     pdf.setDrawColor(200, 169, 81);
@@ -649,12 +653,16 @@ export default function App() {
     pdf.setFontSize(10.5);
     pdf.setTextColor(15, 30, 53);
     pdf.text('Date:', xStart, y);
+    const dateLabelWExp = pdf.getTextWidth('Date:');
+    const dateValueXExp = xStart + dateLabelWExp + 2;
     pdf.setFont('times', 'normal');
     pdf.setTextColor(17, 17, 17);
-    pdf.text(`  ${fSigDate || '___________'}`, xStart + pdf.getTextWidth('Date:'), y);
+    if (fSigDate) {
+      pdf.text(fSigDate, dateValueXExp, y);
+    }
     pdf.setDrawColor(15, 30, 53);
     pdf.setLineWidth(0.35);
-    pdf.line(xStart + pdf.getTextWidth('Date:  '), y + 1, xStart + pdf.getTextWidth('Date:  ') + 38, y + 1);
+    pdf.line(dateValueXExp, y + 1, dateValueXExp + 35, y + 1);
 
     const footerY = 267;
     pdf.setDrawColor(200, 169, 81);
@@ -913,37 +921,56 @@ export default function App() {
           <div className="preview-scroll-container">
             <div className="letter-shadow-wrap">
               <div id="letter-preview">
-                <div className="letter-header">
-                  <img src="/logo.png" alt="Echo HMS Logo" className="letter-logo" />
+                {/* Header: logo centred, top at 17mm, height 8.28mm, gold line at 29.5mm */}
+                <div className="letter-header" style={{ paddingTop: '17mm', paddingBottom: '0', paddingLeft: '0', paddingRight: '0', alignItems: 'center', justifyContent: 'center' }}>
+                  <img
+                    src="/logo.png"
+                    alt="Echo HMS Logo"
+                    style={{ width: '52mm', height: '8.28mm', objectFit: 'contain', display: 'block' }}
+                  />
                 </div>
-                <div className="letter-header-accent" style={{ background: '#c8a951', height: '0.4mm', margin: '0 25mm' }} />
-                
-                <div className="letter-body" style={{ padding: '20mm 25mm 10mm' }}>
-                  <div className="letter-date" style={{ marginBottom: '8mm' }}>
+                {/* Gold accent line — sits at ~25.28mm (logo bottom) + 4.22mm gap = 29.5mm from top */}
+                <div style={{ height: '0.4mm', background: '#c8a951', margin: '4.22mm 25mm 0' }} />
+
+                {/* Letter body — content starts at Date (y=39mm from page top, i.e. 9.5mm below gold line) */}
+                <div className="letter-body" style={{ padding: '9.5mm 25mm 0mm', flex: 1 }}>
+
+                  {/* Date — y=39mm from top */}
+                  <div style={{ fontSize: '12pt', marginBottom: '8.5mm', color: '#111111', fontFamily: "'Times New Roman', serif", lineHeight: 1.2 }}>
                     <strong>Date: </strong>{formatDate(form.letterDate) || '[Date of Letter]'}
                   </div>
 
-                  <div className="letter-to-block" style={{ marginBottom: '8mm' }}>
-                    <p>To,</p>
-                    <p className="to-name">{form.empName || '[Employee Name]'}</p>
-                    <p>Employee ID: {form.empId || '[Employee ID]'}</p>
+                  {/* To block — "To," at y=47.5mm */}
+                  <div style={{ marginBottom: '8mm', fontFamily: "'Times New Roman', serif", lineHeight: 1.45 }}>
+                    <p style={{ fontSize: '12pt', margin: '0 0 0', color: '#111' }}>To,</p>
+                    <p style={{ fontSize: '13pt', fontWeight: 800, color: '#0f1e35', margin: '0' }}>
+                      {form.empName || '[Employee Name]'}
+                    </p>
+                    <p style={{ fontSize: '12pt', margin: '0', color: '#111' }}>
+                      Employee ID: {form.empId || '[Employee ID]'}
+                    </p>
                   </div>
 
-                  <div className="letter-subject" style={{ 
-                    background: '#f4f6f9', 
-                    borderLeft: '4px solid #0f1e35', 
-                    padding: '3mm 4mm',
-                    marginBottom: '10mm',
+                  {/* Subject block — height 9.5mm, top border-left accent */}
+                  <div style={{
+                    background: '#f4f6f9',
+                    borderLeft: '3px solid #0f1e35',
+                    padding: '0 4mm',
+                    marginBottom: '8.5mm',
                     display: 'flex',
-                    gap: '4px'
+                    alignItems: 'center',
+                    height: '9.5mm',
+                    gap: '0',
+                    fontFamily: "'Times New Roman', serif",
                   }}>
-                    <span className="subj-label" style={{ fontWeight: 'bold', color: '#0f1e35' }}>Subject: </span>
-                    <span className="subj-text" style={{ fontWeight: 'bold', textDecoration: 'underline', color: '#0f1e35' }}>
+                    <span style={{ fontWeight: 'bold', color: '#0f1e35', fontSize: '12pt', whiteSpace: 'nowrap' }}>Subject:&nbsp;</span>
+                    <span style={{ fontWeight: 'bold', textDecoration: 'underline', color: '#0f1e35', fontSize: '12pt' }}>
                       {activePreviewTab === 'relieving' ? 'Relieving Letter' : 'Experience Certificate'}
                     </span>
                   </div>
 
-                  <div className="letter-salutation" style={{ fontWeight: 'bold', marginBottom: '6mm' }}>
+                  {/* Salutation — 18mm from subject top, i.e. 8.5mm after subject bottom */}
+                  <div style={{ fontSize: '12.5pt', fontWeight: 'bold', marginBottom: '7mm', color: '#0d0d0d', fontFamily: "'Times New Roman', serif" }}>
                     Dear {form.empName || '[Employee Name]'},
                   </div>
 
@@ -953,7 +980,7 @@ export default function App() {
                         This is to formally acknowledge that you have been relieved from your duties at <strong className="bold-value">Echo HMS by Grelin Health India LLP</strong> with effect from <strong className="bold-value">{formatDate(form.lastWorkingDate) || '[Last Working Date]'}</strong>.
                       </p>
                       <p className="letter-para">
-                        You were employed with us as <strong className="bold-value">{form.designation || '[Designation]'}</strong> from <strong className="bold-value">{formatDate(form.dateOfJoining) || '[Date of Joining]'}</strong> to <strong className="bold-value">{formatDate(form.lastWorkingDate) || '[Last Working Date]'}</strong>. During your tenure, you fulfilled your assigned responsibilities diligently and have completed the required handover of your duties, documents, and company assets in accordance with the organization's policies and procedures.
+                        You were employed with us as <strong className="bold-value">{form.designation || '[Designation]'}</strong> from <strong className="bold-value">{formatDate(form.dateOfJoining) || '[Date of Joining]'}</strong> to <strong className="bold-value">{formatDate(form.lastWorkingDate) || '[Last Working Date]'}</strong>. During your tenure, you fulfilled your assigned responsibilities diligently and have completed the required handover of your duties, documents, and company assets in accordance with the organization&apos;s policies and procedures.
                       </p>
                       <p className="letter-para">
                         We hereby confirm that there are no outstanding dues, liabilities, or obligations pending from your end as of your relieving date.
@@ -968,7 +995,7 @@ export default function App() {
                         This is to certify that you were employed with <strong className="bold-value">Echo HMS by Grelin Health India LLP</strong> as <strong className="bold-value">{form.designation || '[Designation]'}</strong> from <strong className="bold-value">{formatDate(form.dateOfJoining) || '[Date of Joining]'}</strong> to <strong className="bold-value">{formatDate(form.lastWorkingDate) || '[Last Working Date]'}</strong>.
                       </p>
                       <p className="letter-para">
-                        During your tenure with the organization, you were entrusted with responsibilities relevant to your role and demonstrated dedication, professionalism, and commitment in carrying out your duties. You consistently contributed to the organization's objectives and maintained a professional approach towards colleagues, clients, and assigned tasks.
+                        During your tenure with the organization, you were entrusted with responsibilities relevant to your role and demonstrated dedication, professionalism, and commitment in carrying out your duties. You consistently contributed to the organization&apos;s objectives and maintained a professional approach towards colleagues, clients, and assigned tasks.
                       </p>
                       <p className="letter-para">
                         We appreciate your contributions during your association with us and thank you for your services. We wish you every success and prosperity in your future professional endeavors.
@@ -976,35 +1003,33 @@ export default function App() {
                     </>
                   )}
 
-                  <div className="letter-signoff" style={{ marginTop: '10mm', padding: 0 }}>
-                    <p className="letter-yours" style={{ fontSize: '10.5pt', margin: 0, color: '#1a1a1a' }}>Yours sincerely,</p>
-                    <p className="letter-for-company" style={{ fontSize: '11pt', fontWeight: 'bold', color: '#0f1e35', marginTop: '1.5mm', marginBottom: '6mm' }}>
+                  {/* Signoff — matches PDF signoff block */}
+                  <div style={{ marginTop: '8mm', padding: 0, fontFamily: "'Times New Roman', serif" }}>
+                    <p style={{ fontSize: '10.5pt', margin: '0', color: '#1a1a1a' }}>Yours sincerely,</p>
+                    <p style={{ fontSize: '11pt', fontWeight: 'bold', color: '#0f1e35', margin: '1.5mm 0 9.5mm' }}>
                       For Echo HMS by Grelin Health India LLP
                     </p>
-                    
-                    <p style={{ fontSize: '10.5pt', fontWeight: 'bold', color: '#0f1e35', marginBottom: '3mm' }}>Authorised Signatory:</p>
-                    
-                    <div className="sig-row-img" style={{ marginBottom: '5mm', display: 'flex', alignItems: 'center' }}>
+                    <p style={{ fontSize: '10.5pt', fontWeight: 'bold', color: '#0f1e35', margin: '0 0 3mm' }}>Authorised Signatory:</p>
+                    <div style={{ marginBottom: '5.2mm', display: 'flex', alignItems: 'center' }}>
                       <img src="/signature.png" alt="Signature" style={{ height: '13.3mm', width: '38mm', objectFit: 'contain' }} />
                     </div>
-
-                    <p style={{ fontSize: '11pt', fontWeight: 'bold', marginBottom: '4mm' }}>Sofia Balan</p>
-                    
-                    <div style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
-                      <span style={{ fontSize: '10.5pt', fontWeight: 'bold', color: '#0f1e35' }}>Date:</span>
-                      <span style={{ borderBottom: '1px solid #0f1e35', minWidth: '35mm', paddingLeft: '8px', fontSize: '10.5pt' }}>
-                        {formatDate(form.sigDate) || '[Signature Date]'}
+                    <p style={{ fontSize: '11pt', fontWeight: 'bold', color: '#111', margin: '0 0 7mm' }}>Sofia Balan</p>
+                    <div style={{ display: 'flex', alignItems: 'baseline', gap: '2mm' }}>
+                      <span style={{ fontSize: '10.5pt', fontWeight: 'bold', color: '#0f1e35', whiteSpace: 'nowrap' }}>Date:</span>
+                      <span style={{ borderBottom: '0.35mm solid #0f1e35', minWidth: '35mm', paddingLeft: '2mm', fontSize: '10.5pt', color: '#111' }}>
+                        {formatDate(form.sigDate) || ''}
                       </span>
                     </div>
                   </div>
                 </div>
 
-                <div className="letter-footer" style={{ marginTop: 'auto', padding: '10mm 25mm 8mm', textAlign: 'center' }}>
-                  <div style={{ borderTop: '0.5mm solid #c8a951', margin: '0 auto 3mm' }} />
-                  <p style={{ fontWeight: 'bold', color: '#0f1e35', fontSize: '11px', margin: 0 }}>
+                {/* Footer — anchored at footerY=267mm from top: gold line at 263mm */}
+                <div style={{ marginTop: 'auto', padding: '0 25mm 8mm', textAlign: 'center', fontFamily: "'Times New Roman', serif" }}>
+                  <div style={{ borderTop: '0.5mm solid #c8a951', marginBottom: '4mm' }} />
+                  <p style={{ fontWeight: 'bold', color: '#0f1e35', fontSize: '10pt', margin: 0 }}>
                     Echo HMS by Grelin Health India LLP
                   </p>
-                  <p style={{ color: '#64646e', fontSize: '9px', margin: '2px 0 0' }}>
+                  <p style={{ color: '#64646e', fontSize: '8.5pt', margin: '1.5mm 0 0' }}>
                     No. 44/80, Thanthai Periyar Nagar, Kundrathur Main Road, Kummananchavadi, Ponammalle, Chennai - 600 056
                   </p>
                 </div>
